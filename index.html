@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Large PPTX to PDF Converter (Asynchronous)</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        :root {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom scrollbar for better aesthetics */
+        body::-webkit-scrollbar {
+            width: 8px;
+        }
+        body::-webkit-scrollbar-thumb {
+            background-color: #6d28d9;
+            border-radius: 4px;
+        }
+        /* Apply smooth shadow to card */
+        .card {
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1), 0 6px 6px rgba(0, 0, 0, 0.15);
+        }
+        /* Progress bar animation for the conversion phase */
+        @keyframes pulse-progress {
+            0% { width: 50%; }
+            50% { width: 95%; }
+            100% { width: 50%; }
+        }
+        .progress-pulse {
+            animation: pulse-progress 4s ease-in-out infinite alternate;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center p-4">
+
+    <div class="card bg-white p-6 md:p-10 rounded-xl w-full max-w-xl">
+        <h1 class="text-3xl font-bold text-purple-700 mb-2 text-center">
+            PPTX to PDF Converter
+        </h1>
+        <p class="text-gray-500 mb-6 text-center">
+            Handles large presentations (150MB+) using chunked upload and non-blocking conversion.
+        </p>
+
+        <!-- File Input and Upload Button -->
+        <div id="upload-stage" class="space-y-4">
+            <label for="fileInput" class="block text-sm font-medium text-gray-700">Select .PPTX or .PPT File</label>
+            <input type="file" id="fileInput" accept=".ppt,.pptx" class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none p-3 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-purple-100 file:text-purple-700 hover:file:bg-purple-200 transition duration-150">
+
+            <button id="uploadButton" onclick="startUpload()" class="w-full py-3 bg-purple-600 text-white font-semibold rounded-xl hover:bg-purple-700 transition duration-200 shadow-lg shadow-purple-200" disabled>
+                <span id="buttonText">Select a File to Convert</span>
+            </button>
+        </div>
+
+        <!-- Progress and Status Area -->
+        <div id="status-stage" class="hidden mt-6 space-y-4">
+            <div class="text-lg font-semibold text-gray-700" id="currentFileStatus"></div>
+            
+            <!-- Progress Bar -->
+            <div>
+                <div class="flex justify-between mb-1">
+                    <span class="text-sm font-medium text-purple-700">Progress</span>
+                    <span class="text-sm font-medium text-purple-700" id="upload-percent">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <!-- Note: Progress bar will dynamically apply or remove the 'progress-pulse' class for conversion visual feedback -->
+                    <div id="progressBar" class="bg-purple-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- Detailed Status Log -->
+            <div id="statusLog" class="text-sm text-gray-500 bg-gray-100 p-4 rounded-lg h-32 overflow-y-auto">
+                Waiting for file selection...
+            </div>
+
+            <!-- Loading Spinner (for conversion time) -->
+            <div id="conversion-spinner" class="hidden flex items-center justify-center space-x-2 p-4 text-purple-600">
+                <svg class="animate-spin h-5 w-5 mr-3 text-purple-600" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span id="conversionStatusText" class="font-medium">Starting conversion... (This may take a moment for large files)</span>
+            </div>
+        </div>
+
+        <!-- Download Area -->
+        <div id="download-stage" class="hidden mt-6 p-6 bg-green-50 border-2 border-green-300 rounded-xl text-center space-y-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-green-600 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            <h2 class="text-xl font-bold text-green-800">Conversion Complete!</h2>
+            <a id="downloadLink" href="#" download class="inline-block py-3 px-6 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition duration-200 shadow-md">
+                Download PDF
+            </a>
+            <button onclick="resetApp()" class="block w-full text-sm text-gray-500 mt-4 hover:text-gray-700 transition">
+                Convert Another File
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        // CONFIRMED RENDER URL (Needs to be replaced with the actual server address)
+        const BASE_URL = 'https://pptx-pdf-converter.onrender.com'; 
+        
+        const CHUNK_SIZE = 1024 * 1024 * 5; // 5 MB chunks, crucial for large file stability
+        const MAX_RETRIES = 5;
+        const POLL_INTERVAL_MS = 3000; // Check status every 3 seconds
+
+        // --- STATE AND DOM REFERENCES ---
+        let selectedFile = null;
+        let uploadSessionId = null;
+        let currentChunkIndex = 0;
+        let totalChunks = 0;
+        let isUploading = false;
+        let currentProgress = 0;
+        let conversionPollingInterval = null; // Timer reference for polling
+
+        const fileInput = document.getElementById('fileInput');
+        const uploadButton = document.getElementById('uploadButton');
+        const buttonText = document.getElementById('buttonText');
+        const statusStage = document.getElementById('status-stage');
+        const uploadStage = document.getElementById('upload-stage');
+        const downloadStage = document.getElementById('download-stage');
+        const progressBar = document.getElementById('progressBar');
+        const uploadPercent = document.getElementById('upload-percent');
+        const statusLog = document.getElementById('statusLog');
+        const currentFileStatus = document.getElementById('currentFileStatus');
+        const conversionSpinner = document.getElementById('conversion-spinner');
+        const conversionStatusText = document.getElementById('conversionStatusText');
+        const downloadLink = document.getElementById('downloadLink');
+
+        // --- UTILITY FUNCTIONS ---
+
+        /**
+         * Generic fetch wrapper with exponential backoff retry logic.
+         */
+        async function handleApiCall(url, options, retryCount = 0) {
+            const delay = Math.pow(2, retryCount) * 1000 + (Math.random() * 1000); 
+            
+            try {
+                const response = await fetch(url, options);
+                
+                if (response.ok) {
+                    const contentType = response.headers.get("content-type");
+                    if (contentType && contentType.includes("application/json")) {
+                        return await response.json();
+                    } else {
+                        // Handle 202 No Content or simple 200 responses that aren't JSON
+                        return { status: 'success', statusCode: response.status };
+                    }
+                }
+
+                let errorDetails = response.statusText;
+                try {
+                    const errorJson = await response.json();
+                    errorDetails = errorJson.error || response.statusText;
+                } catch {
+                    // Ignore if response is not JSON
+                }
+
+                throw new Error(`Server returned status ${response.status}: ${errorDetails}`);
+
+            } catch (error) {
+                if (retryCount < MAX_RETRIES) {
+                    logStatus(`Attempt failed. Retrying in ${Math.round(delay / 1000)}s... (Attempt ${retryCount + 1}/${MAX_RETRIES})`, 'warn');
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return handleApiCall(url, options, retryCount + 1);
+                } else {
+                    logStatus(`API request failed after ${MAX_RETRIES} attempts: ${error.message}`, 'error');
+                    throw new Error(`API failed: ${error.message}`);
+                }
+            }
+        }
+
+        function updateProgress(percent) {
+            currentProgress = Math.min(100, Math.max(0, percent));
+            progressBar.style.width = `${currentProgress}%`;
+            uploadPercent.textContent = `${Math.round(currentProgress)}%`;
+        }
+        
+        /**
+         * Simulates active conversion progress (50% to 95%) since the server doesn't provide real-time updates.
+         */
+        function startConversionVisualProgress() {
+            progressBar.classList.add('progress-pulse');
+        }
+
+        function stopConversionVisualProgress() {
+            progressBar.classList.remove('progress-pulse');
+            if (conversionPollingInterval) {
+                clearInterval(conversionPollingInterval);
+                conversionPollingInterval = null;
+            }
+        }
+
+        function logStatus(message, type = 'info') {
+            const now = new Date().toLocaleTimeString();
+            let color = 'text-gray-700';
+            if (type === 'success') color = 'text-green-600 font-medium';
+            if (type === 'warn') color = 'text-yellow-600';
+            if (type === 'error') color = 'text-red-600 font-bold';
+
+            const logEntry = document.createElement('p');
+            logEntry.className = `${color} text-xs leading-relaxed`;
+            logEntry.innerHTML = `<span class="text-gray-400 mr-2">[${now}]</span> ${message}`;
+
+            statusLog.prepend(logEntry); // Add to top
+            // Keep log clean
+            if (statusLog.children.length > 50) {
+                statusLog.removeChild(statusLog.lastChild);
+            }
+        }
+
+
+        // --- EVENT LISTENER ---
+
+        fileInput.addEventListener('change', (e) => {
+            selectedFile = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+
+            if (selectedFile) {
+                const fileName = selectedFile.name;
+                const fileSizeMB = (selectedFile.size / (1024 * 1024)).toFixed(2);
+                
+                if (!fileName.toLowerCase().match(/\.(ppt|pptx)$/)) {
+                    logStatus(`Error: Invalid file type selected. Please choose a .ppt or .pptx file.`, 'error');
+                    uploadButton.disabled = true;
+                    buttonText.textContent = "Invalid File Type";
+                    currentFileStatus.textContent = "Error: Invalid file";
+                    selectedFile = null;
+                    return;
+                }
+                
+                totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+                
+                uploadButton.disabled = false;
+                buttonText.textContent = `Upload & Convert (${fileSizeMB} MB)`;
+                currentFileStatus.textContent = `File: ${fileName} (${fileSizeMB} MB)`;
+                
+                logStatus(`File selected: ${fileName}. Total Chunks: ${totalChunks}.`, 'info');
+                
+                statusLog.innerHTML = '';
+                logStatus("Ready to begin upload.", 'info');
+            } else {
+                uploadButton.disabled = true;
+                buttonText.textContent = "Select a File to Convert";
+            }
+        });
+
+        // --- WORKFLOW FUNCTIONS ---
+
+        /**
+         * 1. Initiates the upload process.
+         */
+        async function startUpload() {
+            if (!selectedFile || isUploading || !selectedFile.name || selectedFile.size === 0) {
+                logStatus("Error: No file selected or file is invalid/empty. Please select a valid file.", 'error');
+                resetUploadUI();
+                return;
+            }
+
+            // UI State Transition: Upload -> Status
+            uploadStage.classList.add('hidden');
+            statusStage.classList.remove('hidden');
+            downloadStage.classList.add('hidden');
+            
+            isUploading = true;
+            uploadButton.disabled = true;
+            buttonText.textContent = "Uploading...";
+            
+            logStatus("Starting upload session...", 'info');
+
+            try {
+                // 1. API Call: Create Session
+                const session = await createUploadSession(selectedFile.name, selectedFile.size);
+                uploadSessionId = session.sessionId;
+
+                logStatus(`Session created (ID: ${uploadSessionId}). Starting chunk uploads...`, 'success');
+                
+                // 2. Start Chunking
+                currentChunkIndex = 0; // Reset chunk index for the new upload
+                await uploadNextChunk();
+
+            } catch (error) {
+                logStatus(`Upload failed: ${error.message}`, 'error');
+                isUploading = false;
+                resetUploadUI();
+            }
+        }
+        
+        /**
+         * API Call: Creates the server-side session.
+         */
+        async function createUploadSession(fileName, fileSize) {
+            const url = `${BASE_URL}/api/upload/session`;
+            const options = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fileName, fileSize })
+            };
+            return await handleApiCall(url, options);
+        }
+
+        /**
+         * 2. Uploads the next chunk of the file using raw binary transfer.
+         */
+        async function uploadNextChunk() {
+            if (currentChunkIndex >= totalChunks) {
+                logStatus("All chunks uploaded.", 'success');
+                // All chunks uploaded, signal completion and start conversion
+                await completeUpload(); 
+                return;
+            }
+
+            const start = currentChunkIndex * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
+            const chunk = selectedFile.slice(start, end);
+            const chunkNumber = currentChunkIndex + 1;
+
+            logStatus(`Uploading chunk ${chunkNumber}/${totalChunks} (${((end - start) / 1024).toFixed(1)} KB)...`);
+
+            try {
+                // API Call: Upload Chunk
+                const url = `${BASE_URL}/api/upload/chunk/${uploadSessionId}?chunkIndex=${currentChunkIndex}`;
+                const options = {
+                    method: 'POST',
+                    body: chunk,
+                    headers: { 
+                        'Content-Type': 'application/octet-stream' 
+                    }
+                };
+
+                await handleApiCall(url, options);
+
+                // Update progress
+                currentChunkIndex++;
+                // Upload phase is the first 50% of the bar
+                const uploadPercentValue = (currentChunkIndex / totalChunks) * 50; 
+                updateProgress(uploadPercentValue);
+
+                // Recursively call for the next chunk
+                uploadNextChunk();
+                
+            } catch (error) {
+                logStatus(`Chunk ${chunkNumber} failed: ${error.message}. Stopping upload.`, 'error');
+                isUploading = false;
+                resetUploadUI();
+            }
+        }
+        
+        /**
+         * 3. Signals the server the upload is complete and triggers the non-blocking conversion job.
+         */
+        async function completeUpload() {
+            logStatus("Upload complete. Signaling server to assemble file and start conversion...", 'info');
+            
+            // API Call: Complete Upload - Server starts conversion and immediately returns 202
+            const result = await handleApiCall(
+                `${BASE_URL}/api/upload/complete/${uploadSessionId}`, 
+                { method: 'POST' }
+            );
+
+            // Expecting: { status: 'processing' } with a 202 status code
+            if (result.status === 'processing') {
+                logStatus("Conversion job started. Server response: 202 Accepted. Starting client polling...", 'success');
+                conversionSpinner.classList.remove('hidden');
+                conversionStatusText.textContent = "Processing PPTX to PDF... (High-fidelity conversion running)";
+                updateProgress(50); // Start conversion phase at 50%
+                startConversionVisualProgress(); // Start the progress bar pulse animation
+                pollForConversion(); // Start checking for the result
+            } else {
+                throw new Error("Conversion failed to start or returned an unexpected status.");
+            }
+        }
+
+        /**
+         * 4. Periodically checks the conversion status via the polling endpoint.
+         */
+        function pollForConversion() {
+            if (conversionPollingInterval) clearInterval(conversionPollingInterval);
+            logStatus(`Starting polling for job status every ${POLL_INTERVAL_MS / 1000} seconds...`, 'info');
+
+            conversionPollingInterval = setInterval(async () => {
+                try {
+                    // API Call: Conversion Status
+                    const result = await handleApiCall(
+                        `${BASE_URL}/api/conversion/status/${uploadSessionId}`, 
+                        { method: 'GET' }
+                    );
+                    
+                    logStatus(`Current job status: ${result.status}`, 'info');
+
+                    if (result.status === 'complete') {
+                        stopConversionVisualProgress();
+                        
+                        logStatus("Conversion finished successfully!", 'success');
+                        conversionSpinner.classList.add('hidden');
+                        
+                        // Update UI to final download state
+                        updateProgress(100);
+                        downloadLink.href = result.downloadUrl; // Set the final download URL
+                        downloadLink.download = selectedFile.name.replace(/\.(ppt|pptx)$/i, '.pdf');
+
+                        statusStage.classList.add('hidden');
+                        downloadStage.classList.remove('hidden');
+
+                        isUploading = false;
+                        
+                    } else if (result.status === 'failed') {
+                        stopConversionVisualProgress();
+                        logStatus(`Conversion failed: ${result.error || 'The server reported a conversion error.'}`, 'error');
+                        conversionSpinner.classList.add('hidden');
+                        resetUploadUI();
+
+                    } else if (result.status === 'processing') {
+                        // Keep polling, the visual progress pulse is running
+                        conversionStatusText.textContent = `Conversion running... (Waiting for the final file)`;
+                    }
+                } catch (error) {
+                    stopConversionVisualProgress();
+                    logStatus(`Polling failed due to API error: ${error.message}`, 'error');
+                    resetUploadUI();
+                }
+            }, POLL_INTERVAL_MS);
+        }
+
+
+        // --- UI UTILITY FUNCTIONS ---
+
+        function resetApp() {
+            // Clear any active polling interval
+            stopConversionVisualProgress();
+            
+            // Reset all state variables
+            selectedFile = null;
+            uploadSessionId = null;
+            currentChunkIndex = 0;
+            totalChunks = 0;
+            isUploading = false;
+            currentProgress = 0;
+            fileInput.value = ''; // Clear file input
+            
+            // Reset UI stages
+            uploadStage.classList.remove('hidden');
+            statusStage.classList.add('hidden');
+            downloadStage.classList.add('hidden');
+            
+            // Reset status elements
+            resetUploadUI();
+            logStatus("Application ready. Waiting for a file to be selected.", 'info');
+        }
+
+        function resetUploadUI() {
+            uploadButton.disabled = true;
+            buttonText.textContent = "Select a File to Convert";
+            currentFileStatus.textContent = "";
+            conversionSpinner.classList.add('hidden');
+            stopConversionVisualProgress();
+            updateProgress(0);
+        }
+
+        // Initialize on load
+        window.onload = resetApp; 
+    </script>
+</body>
+</html>
