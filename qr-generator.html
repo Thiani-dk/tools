@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Generator Pro</title>
+    <!-- 1. Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. Load Google Font 'Inter' -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- 3. Load the QR Code generating library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    
+    <style>
+        /* Use Inter as the default font */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for the file input */
+        .file-input-label {
+            display: inline-block;
+            cursor: pointer;
+            padding: 0.75rem 1rem;
+            background-color: #4f46e5; /* indigo-600 */
+            color: white;
+            border-radius: 0.5rem; /* rounded-lg */
+            font-weight: 500; /* medium */
+            transition: background-color 0.2s;
+        }
+        .file-input-label:hover {
+            background-color: #4338ca; /* indigo-700 */
+        }
+    </style>
+</head>
+<body class="bg-slate-100 flex items-center justify-center min-h-screen p-4">
+
+    <!-- Main Application Card -->
+    <div class="bg-white p-6 md:p-8 rounded-xl shadow-2xl w-full max-w-md">
+        
+        <!-- Header -->
+        <h1 class="text-2xl md:text-3xl font-bold text-center text-slate-800">QR Code Generator Pro</h1>
+        <p class="text-center text-slate-500 mt-2">Create professional QR codes with your logo.</p>
+
+        <!-- Form -->
+        <div class="mt-8 space-y-5">
+            
+            <!-- 1. URL Input -->
+            <div>
+                <label for="url-input" class="block text-sm font-medium text-slate-700 mb-1">Your Website URL</label>
+                <input type="url" id="url-input" placeholder="https://www.your-website.com" class="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition" required>
+            </div>
+
+            <!-- 2. Logo Input -->
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Your Logo (Optional)</label>
+                <div class="flex items-center space-x-3">
+                    <label for="logo-input" class="file-input-label">
+                        Choose File
+                    </label>
+                    <input type="file" id="logo-input" accept="image/png, image/jpeg, image/svg+xml" class="hidden">
+                    <span id="file-name" class="text-sm text-slate-500 truncate">No file selected</span>
+                </div>
+                <p class="text-xs text-slate-400 mt-1.5">Upload a PNG, JPG, or SVG. It will be centered.</p>
+            </div>
+
+            <!-- 3. Text Input -->
+            <div>
+                <label for="text-input" class="block text-sm font-medium text-slate-700 mb-1">Or, Add Short Text (Optional)</label>
+                <input type="text" id="text-input" placeholder="e.g., SCAN ME" maxlength="12" class="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition">
+                <p class="text-xs text-slate-400 mt-1.5">Max 12 chars. Logo will be used if both are provided.</p>
+            </div>
+
+            <!-- 4. Error Correction Select -->
+            <div>
+                <label for="error-level" class="block text-sm font-medium text-slate-700 mb-1">Scannability</label>
+                <select id="error-level" class="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition bg-white">
+                    <option value="L">Low (Best for simple links)</option>
+                    <option value="M">Medium</option>
+                    <option value="Q">Quartile</option>
+                    <option value="H" selected>High (Best for logos/text)</option>
+                </select>
+                <p class="text-xs text-slate-400 mt-1.5">"High" is recommended when adding a logo or text.</p>
+            </div>
+
+            <!-- 5. Generate Button -->
+            <button id="generate-btn" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50">
+                Generate QR Code
+            </button>
+
+            <!-- Error Message Area -->
+            <div id="error-message" class="text-center text-red-600 font-medium text-sm"></div>
+        </div>
+
+        <!-- Output Area -->
+        <div id="qrcode-container" class="mt-8 text-center" style="display: none;">
+            <!-- This div is where the QR code will be rendered by the library -->
+            <div id="qrcode" class="flex justify-center p-4 bg-white border border-slate-200 rounded-lg shadow-inner">
+                <!-- The canvas will be created here -->
+            </div>
+
+            <!-- Download Button -->
+            <button id="download-btn" class="mt-5 w-full bg-emerald-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 transition-all duration-200">
+                Download QR Code (.png)
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        // Get all necessary DOM elements
+        const urlInput = document.getElementById('url-input');
+        const logoInput = document.getElementById('logo-input');
+        const textInput = document.getElementById('text-input');
+        const errorLevelSelect = document.getElementById('error-level');
+        const generateBtn = document.getElementById('generate-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        const qrcodeContainer = document.getElementById('qrcode-container');
+        const qrcodeEl = document.getElementById('qrcode');
+        const errorEl = document.getElementById('error-message');
+        const fileNameEl = document.getElementById('file-name');
+
+        let qrCodeInstance = null; // To hold the QRCode object
+
+        // Update file name display when a file is chosen
+        logoInput.addEventListener('change', () => {
+            if (logoInput.files && logoInput.files[0]) {
+                fileNameEl.textContent = logoInput.files[0].name;
+            } else {
+                fileNameEl.textContent = 'No file selected';
+            }
+        });
+
+        // Main function to generate the QR code
+        const generateQR = async () => {
+            const url = urlInput.value;
+            const logoFile = logoInput.files[0];
+            const text = textInput.value;
+            let errorLevel = errorLevelSelect.value;
+
+            // --- 1. Validation ---
+            if (!url) {
+                errorEl.textContent = 'Please enter a website URL.';
+                return;
+            }
+            errorEl.textContent = '';
+            
+            // --- 2. Force High Error Correction if logo/text is used ---
+            // This is crucial for scannability, as the logo/text covers part of the code.
+            if (logoFile || text) {
+                errorLevel = 'H';
+                if (errorLevelSelect.value !== 'H') {
+                    console.warn("Forcing Error Correction to 'High' for logo/text overlay.");
+                    errorLevelSelect.value = 'H';
+                }
+            }
+            
+            // --- 3. Clear old QR code and set loading state ---
+            qrcodeEl.innerHTML = '';
+            qrcodeContainer.style.display = 'none';
+            downloadBtn.style.display = 'none';
+            generateBtn.disabled = true;
+            generateBtn.textContent = 'Generating...';
+
+            try {
+                // --- 4. Create the base QR Code ---
+                if (qrCodeInstance) {
+                    qrCodeInstance.clear(); // Clear previous instance if exists
+                }
+                
+                qrCodeInstance = new QRCode(qrcodeEl, {
+                    text: url,
+                    width: 256,
+                    height: 256,
+                    colorDark: "#000000",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel[errorLevel]
+                });
+
+                // --- 5. Wait for the canvas to be drawn by the library ---
+                // We use a short delay to ensure the canvas is ready to be manipulated.
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                const canvas = qrcodeEl.querySelector('canvas');
+                if (!canvas) {
+                    throw new Error('Could not find QR Code canvas element.');
+                }
+                const ctx = canvas.getContext('2d');
+
+                // --- 6. Add Logo or Text Overlay ---
+                // We prioritize the logo if both are provided
+                if (logoFile) {
+                    await addLogoToCanvas(ctx, canvas, logoFile);
+                } else if (text) {
+                    addTextToCanvas(ctx, canvas, text);
+                }
+
+                // --- 7. Show the final result ---
+                qrcodeContainer.style.display = 'block';
+                downloadBtn.style.display = 'block';
+
+            } catch (err) {
+                console.error('QR Code Generation Error:', err);
+                errorEl.textContent = 'Error generating QR code. Please try again.';
+            } finally {
+                // --- 8. Reset button state ---
+                generateBtn.disabled = false;
+                generateBtn.textContent = 'Generate QR Code';
+            }
+        };
+
+        /**
+         * Reads a logo file and draws it onto the center of the canvas.
+         * Returns a Promise that resolves when drawing is complete.
+         */
+        const addLogoToCanvas = (ctx, canvas, file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvasSize = canvas.width;
+                        // Calculate logo size (e.g., 25% of canvas width)
+                        const logoSize = canvasSize * 0.25;
+                        const logoX = (canvasSize - logoSize) / 2;
+                        const logoY = (canvasSize - logoSize) / 2;
+                        
+                        // Add a white background/padding behind the logo
+                        // This "cuts out" the QR code behind it.
+                        const padding = 5; // 5px padding
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.fillRect(
+                            logoX - padding, 
+                            logoY - padding, 
+                            logoSize + padding * 2, 
+                            logoSize + padding * 2
+                        );
+
+                        // Draw the logo image
+                        ctx.drawImage(img, logoX, logoY, logoSize, logoSize);
+                        resolve();
+                    };
+                    img.onerror = (err) => reject(new Error('Failed to load logo image.'));
+                    img.src = reader.result;
+                };
+                reader.onerror = (err) => reject(new Error('Failed to read logo file.'));
+                reader.readAsDataURL(file);
+            });
+        };
+
+        /**
+         * Draws centered text onto the canvas.
+         */
+        const addTextToCanvas = (ctx, canvas, text) => {
+            const canvasSize = canvas.width;
+            
+            // Text styling
+            const fontSize = 20;
+            ctx.font = `bold ${fontSize}px Inter`;
+            ctx.fillStyle = '#000000';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Measure text to create a white background for it
+            const metrics = ctx.measureText(text);
+            const textWidth = metrics.width;
+            const textHeight = fontSize; // Approximate height
+            const padding = 10;
+
+            const rectWidth = textWidth + padding;
+            const rectHeight = textHeight + padding;
+            const rectX = (canvasSize - rectWidth) / 2;
+            const rectY = (canvasSize - rectHeight) / 2;
+
+            // Draw white background
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(rectX, rectY, rectWidth, rectHeight);
+
+            // Draw the text on top
+            ctx.fillStyle = '#000000';
+            ctx.fillText(text, canvasSize / 2, canvasSize / 2);
+        };
+
+        /**
+         * Triggers a download of the canvas content as a PNG file.
+         */
+        const downloadQR = () => {
+            const canvas = qrcodeEl.querySelector('canvas');
+            if (!canvas) {
+                errorEl.textContent = 'Could not find QR code to download.';
+                return;
+            }
+
+            // Get the data URL of the canvas
+            const dataURL = canvas.toDataURL('image/png');
+
+            // Create a temporary link element to trigger the download
+            const link = document.createElement('a');
+            link.href = dataURL;
+            link.download = 'my-qr-code.png'; // File name
+            
+            //Trigger the download
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+
+        // --- Attach Event Listeners ---
+        generateBtn.addEventListener('click', generateQR);
+        downloadBtn.addEventListener('click', downloadQR);
+
+    </script>
+</body>
+</html>
